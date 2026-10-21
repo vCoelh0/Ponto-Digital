@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: ponto-digital-vcoelho
+    runtime: node
+    plan: free
+    region: virginia
+    buildCommand: pnpm install --frozen-lockfile && pnpm run build:deploy
+    startCommand: pnpm run start:deploy
+    initialDeployHook: pnpm --filter @workspace/db push
+    healthCheckPath: /api/healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
