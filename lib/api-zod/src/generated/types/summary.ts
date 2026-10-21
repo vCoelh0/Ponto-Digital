@@ -13,5 +13,6 @@ export interface Summary {
   week: SummaryPeriod;
   month: SummaryPeriod;
   all: SummaryPeriod;
+  filtered: SummaryPeriod;
   project?: ProjectSummary;
 }

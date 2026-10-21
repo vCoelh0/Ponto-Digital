@@ -135,9 +135,9 @@ export default function Dashboard() {
     );
   };
 
-  const handlePause = (id: number) => {
+  const handlePause = (id: number, action: "pause" | "resume") => {
     togglePause.mutate(
-      { id },
+      { id, data: { action } },
       {
         onSuccess: invalidateAll,
         onError: () =>
@@ -295,7 +295,9 @@ export default function Dashboard() {
                   size="lg"
                   variant="outline"
                   className="h-14 gap-2 rounded-xl"
-                  onClick={() => handlePause(active.id)}
+                  onClick={() =>
+                    handlePause(active.id, isPaused ? "resume" : "pause")
+                  }
                   disabled={togglePause.isPending || finishService.isPending}
                 >
                   {togglePause.isPending ? (

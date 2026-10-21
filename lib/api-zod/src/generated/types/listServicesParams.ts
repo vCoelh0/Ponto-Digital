@@ -16,6 +16,12 @@ period?: PeriodParameter;
  * @minimum 1
  */
 projectId?: ProjectIdParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
 startDate?: StartDateParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
 endDate?: EndDateParameter;
 };

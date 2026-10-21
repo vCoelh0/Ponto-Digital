@@ -42,30 +42,49 @@ export default function History() {
   const queryClient = useQueryClient();
   const [period, setPeriod] = useState<PeriodParameter>("all");
   const [projectId, setProjectId] = useState("all");
+  const [customStartDate, setCustomStartDate] = useState(() =>
+    format(new Date(), "yyyy-MM-01"),
+  );
+  const [customEndDate, setCustomEndDate] = useState(() =>
+    format(new Date(), "yyyy-MM-dd"),
+  );
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editSubtitle, setEditSubtitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
   const [feedback, setFeedback] = useState("");
 
-  const { data: projects, isLoading: projectsLoading } = useListProjects();
+  const projectsQuery = useListProjects();
+  const { data: projects, isLoading: projectsLoading } = projectsQuery;
   const deleteProject = useDeleteProject();
   const deleteService = useDeleteService();
   const updateService = useUpdateService();
 
   const queryParams = useMemo(() => {
-    const params: { period: PeriodParameter; projectId?: number } = { period };
+    const params: {
+      period: PeriodParameter;
+      projectId?: number;
+      startDate?: string;
+      endDate?: string;
+    } = { period };
     if (projectId !== "all") params.projectId = Number(projectId);
+    if (period === "custom") {
+      params.startDate = customStartDate;
+      params.endDate = customEndDate;
+    }
     return params;
-  }, [period, projectId]);
+  }, [customEndDate, customStartDate, period, projectId]);
 
+  const servicesQuery = useListServices(queryParams);
   const {
     data: services,
     dataUpdatedAt: servicesUpdatedAt,
     isLoading: servicesLoading,
-  } = useListServices(queryParams);
-  const { data: summary, isLoading: summaryLoading } =
-    useGetSummary(queryParams);
+  } = servicesQuery;
+  const summaryQuery = useGetSummary(queryParams);
+  const { data: summary, isLoading: summaryLoading } = summaryQuery;
   const isLoading = projectsLoading || servicesLoading || summaryLoading;
+  const hasLoadError =
+    projectsQuery.isError || servicesQuery.isError || summaryQuery.isError;
 
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: getGetDashboardQueryKey() });
@@ -86,14 +105,6 @@ export default function History() {
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([date, items]) => ({ date, items }));
   }, [services]);
-
-  const totalFilteredSeconds = useMemo(
-    () =>
-      services
-        ?.filter((service) => service.status === "completed")
-        .reduce((total, service) => total + service.durationSeconds, 0) ?? 0,
-    [services],
-  );
 
   const selectedProject =
     projectId === "all"
@@ -176,7 +187,7 @@ export default function History() {
             <h1 className="text-3xl font-semibold tracking-tight">Histórico</h1>
           </div>
 
-          <div className="flex items-center rounded-lg border border-border bg-card p-1 shadow-sm">
+          <div className="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-card p-1 shadow-sm">
             <Filter className="ml-2 mr-1 h-4 w-4 text-muted-foreground" />
             <Select
               value={period}
@@ -190,6 +201,7 @@ export default function History() {
                 <SelectItem value="week">Esta semana</SelectItem>
                 <SelectItem value="month">Este mês</SelectItem>
                 <SelectItem value="all">Todo período</SelectItem>
+                <SelectItem value="custom">Personalizado</SelectItem>
               </SelectContent>
             </Select>
             <div className="mx-1 h-4 w-px bg-border" />
@@ -206,6 +218,34 @@ export default function History() {
                 ))}
               </SelectContent>
             </Select>
+            {period === "custom" && (
+              <>
+                <div className="mx-1 hidden h-4 w-px bg-border sm:block" />
+                <label className="sr-only" htmlFor="history-start-date">
+                  Data inicial
+                </label>
+                <Input
+                  id="history-start-date"
+                  type="date"
+                  value={customStartDate}
+                  max={customEndDate}
+                  onChange={(event) => setCustomStartDate(event.target.value)}
+                  className="h-8 w-[145px] border-0 bg-transparent shadow-none"
+                />
+                <span className="text-xs text-muted-foreground">até</span>
+                <label className="sr-only" htmlFor="history-end-date">
+                  Data final
+                </label>
+                <Input
+                  id="history-end-date"
+                  type="date"
+                  value={customEndDate}
+                  min={customStartDate}
+                  onChange={(event) => setCustomEndDate(event.target.value)}
+                  className="h-8 w-[145px] border-0 bg-transparent shadow-none"
+                />
+              </>
+            )}
           </div>
         </div>
 
@@ -215,7 +255,7 @@ export default function History() {
           </p>
         )}
 
-        {projects && projects.length > 0 && (
+        {!hasLoadError && projects && projects.length > 0 && (
           <section className="space-y-3">
             <div className="flex items-center justify-between px-1">
               <h2 className="text-sm font-medium text-muted-foreground">
@@ -278,6 +318,29 @@ export default function History() {
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
           </div>
+        ) : hasLoadError ? (
+          <div className="rounded-2xl border border-destructive/25 bg-destructive/10 px-6 py-12 text-center">
+            <h2 className="text-lg font-medium text-destructive">
+              Não foi possível carregar o histórico
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Verifique sua conexão e tente novamente.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-5"
+              onClick={() => {
+                void Promise.all([
+                  projectsQuery.refetch(),
+                  servicesQuery.refetch(),
+                  summaryQuery.refetch(),
+                ]);
+              }}
+            >
+              Tentar novamente
+            </Button>
+          </div>
         ) : (
           <>
             <div className="flex flex-col justify-between gap-5 rounded-2xl border border-border bg-card p-6 shadow-sm sm:flex-row sm:items-center">
@@ -288,7 +351,7 @@ export default function History() {
                     : "Todos os projetos · total no período"}
                 </p>
                 <span className="font-mono text-4xl font-medium tracking-tight">
-                  {formatStaticDuration(totalFilteredSeconds)}
+                  {formatStaticDuration(summary?.filtered.seconds ?? 0)}
                 </span>
               </div>
               <div className="flex flex-wrap gap-4 text-sm text-muted-foreground">
@@ -320,28 +383,18 @@ export default function History() {
             ) : (
               <div className="space-y-8">
                 {groupedServices.map((group) => {
-                  const dayTotal = group.items.reduce(
-                    (total, item) =>
-                      total +
-                      (item.status === "completed"
-                        ? item.durationSeconds
-                        : 0),
-                    0,
-                  );
                   return (
                     <section key={group.date} className="space-y-3">
-                      <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center px-1">
                         <h3 className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                           <Calendar className="h-4 w-4" />
+                          Iniciados em{" "}
                           {format(
                             new Date(`${group.date}T12:00:00`),
                             "EEEE, dd 'de' MMMM",
                             { locale: ptBR },
                           )}
                         </h3>
-                        <span className="font-mono text-sm font-medium text-muted-foreground">
-                          {formatStaticDuration(dayTotal)}
-                        </span>
                       </div>
 
                       <div className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-card">

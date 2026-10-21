@@ -21,13 +21,15 @@ export const HealthCheckResponse = zod.object({
  * @summary List work sessions
  */
 export const listServicesQueryPeriodDefault = `month`;
+export const listServicesQueryStartDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const listServicesQueryEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
 
 
 export const ListServicesQueryParams = zod.object({
   "period": zod.enum(['today', 'week', 'month', 'all', 'custom']).default(listServicesQueryPeriodDefault),
   "projectId": zod.coerce.number().int().min(1).optional(),
-  "startDate": zod.date().optional(),
-  "endDate": zod.date().optional()
+  "startDate": zod.coerce.string().regex(listServicesQueryStartDateRegExp).optional(),
+  "endDate": zod.coerce.string().regex(listServicesQueryEndDateRegExp).optional()
 })
 
 export const ListServicesResponseItem = zod.object({
@@ -163,6 +165,10 @@ export const ToggleServicePauseParams = zod.object({
   "id": zod.coerce.number().int().min(1)
 })
 
+export const ToggleServicePauseBody = zod.object({
+  "action": zod.enum(['pause', 'resume'])
+})
+
 export const ToggleServicePauseResponse = zod.object({
   "id": zod.number().int(),
   "title": zod.string(),
@@ -234,6 +240,10 @@ export const GetDashboardResponse = zod.object({
   "seconds": zod.number().int(),
   "label": zod.string()
 }),
+  "filtered": zod.object({
+  "seconds": zod.number().int(),
+  "label": zod.string()
+}),
   "project": zod.object({
   "id": zod.number().int(),
   "title": zod.string(),
@@ -268,10 +278,15 @@ export const GetDashboardResponse = zod.object({
  */
 
 export const getSummaryQueryPeriodDefault = `month`;
+export const getSummaryQueryStartDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+export const getSummaryQueryEndDateRegExp = new RegExp('^\\d{4}-\\d{2}-\\d{2}$');
+
 
 export const GetSummaryQueryParams = zod.object({
   "projectId": zod.coerce.number().int().min(1).optional(),
-  "period": zod.enum(['today', 'week', 'month', 'all', 'custom']).default(getSummaryQueryPeriodDefault)
+  "period": zod.enum(['today', 'week', 'month', 'all', 'custom']).default(getSummaryQueryPeriodDefault),
+  "startDate": zod.coerce.string().regex(getSummaryQueryStartDateRegExp).optional(),
+  "endDate": zod.coerce.string().regex(getSummaryQueryEndDateRegExp).optional()
 })
 
 export const GetSummaryResponse = zod.object({
@@ -288,6 +303,10 @@ export const GetSummaryResponse = zod.object({
   "label": zod.string()
 }),
   "all": zod.object({
+  "seconds": zod.number().int(),
+  "label": zod.string()
+}),
+  "filtered": zod.object({
   "seconds": zod.number().int(),
   "label": zod.string()
 }),

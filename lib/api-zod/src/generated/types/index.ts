@@ -14,6 +14,8 @@ export * from './getSummaryParams';
 export * from './healthStatus';
 export * from './listServicesParams';
 export * from './notFoundResponse';
+export * from './pauseInput';
+export * from './pauseInputAction';
 export * from './periodParameter';
 export * from './project';
 export * from './projectIdParameter';

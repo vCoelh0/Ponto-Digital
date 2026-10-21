@@ -57,6 +57,18 @@ export interface ServiceUpdate {
   description?: string | null;
 }
 
+export type PauseInputAction = typeof PauseInputAction[keyof typeof PauseInputAction];
+
+
+export const PauseInputAction = {
+  pause: 'pause',
+  resume: 'resume',
+} as const;
+
+export interface PauseInput {
+  action: PauseInputAction;
+}
+
 export interface SummaryPeriod {
   seconds: number;
   label: string;
@@ -81,6 +93,7 @@ export interface Summary {
   week: SummaryPeriod;
   month: SummaryPeriod;
   all: SummaryPeriod;
+  filtered: SummaryPeriod;
   project?: ProjectSummary;
 }
 
@@ -134,7 +147,13 @@ period?: PeriodParameter;
  * @minimum 1
  */
 projectId?: ProjectIdParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
 startDate?: StartDateParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
 endDate?: EndDateParameter;
 };
 
@@ -144,5 +163,13 @@ export type GetSummaryParams = {
  */
 projectId?: ProjectIdParameter;
 period?: PeriodParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+startDate?: StartDateParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+endDate?: EndDateParameter;
 };
 

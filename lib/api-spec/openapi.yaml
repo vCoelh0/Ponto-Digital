@@ -142,6 +142,12 @@ paths:
       summary: Pause or resume a work period
       parameters:
         - $ref: "#/components/parameters/ServiceId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PauseInput"
       responses:
         "200":
           description: Paused or resumed work period
@@ -177,6 +183,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ProjectId"
         - $ref: "#/components/parameters/Period"
+        - $ref: "#/components/parameters/StartDate"
+        - $ref: "#/components/parameters/EndDate"
       responses:
         "200":
           description: Time summary
@@ -280,14 +288,16 @@ components:
       required: false
       schema:
         type: string
-        format: date
+        pattern: '^\d{4}-\d{2}-\d{2}$'
+        example: "2026-10-01"
     EndDate:
       name: endDate
       in: query
       required: false
       schema:
         type: string
-        format: date
+        pattern: '^\d{4}-\d{2}-\d{2}$'
+        example: "2026-10-31"
   responses:
     BadRequest:
       description: Invalid request
@@ -376,6 +386,13 @@ components:
           type: string
         description:
           type: ["string", "null"]
+    PauseInput:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [pause, resume]
+      required: [action]
     SummaryPeriod:
       type: object
       properties:
@@ -395,9 +412,11 @@ components:
           $ref: "#/components/schemas/SummaryPeriod"
         all:
           $ref: "#/components/schemas/SummaryPeriod"
+        filtered:
+          $ref: "#/components/schemas/SummaryPeriod"
         project:
           $ref: "#/components/schemas/ProjectSummary"
-      required: [today, week, month, all]
+      required: [today, week, month, all, filtered]
     Project:
       type: object
       properties:

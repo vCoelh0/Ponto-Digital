@@ -27,6 +27,7 @@ import type {
   HealthStatus,
   ListServicesParams,
   NotFoundResponse,
+  PauseInput,
   Project,
   ProjectInput,
   Service,
@@ -561,14 +562,29 @@ export const getToggleServicePauseUrl = (id: number,) => {
 /**
  * @summary Pause or resume a work period
  */
-export const toggleServicePause = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<Service> => {
+export const toggleServicePause = async (id: number,
+    pauseInput: PauseInput, options?: Parameters<typeof customFetch>[1]): Promise<Service> => {
 
-  return customFetch<Service>(getToggleServicePauseUrl(id),
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Service>(getToggleServicePauseUrl(id),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(pauseInput)
   }
 );}
 
@@ -593,9 +609,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
       const mutationFn: MutationFunction<Awaited<ReturnType<typeof toggleServicePause>>, ToggleServicePauseMutationVariables> = (props) => {
-          const {id} = props ?? {};
+          const {id,data} = props ?? {};
 
-          return  toggleServicePause(id,requestOptions)
+          return  toggleServicePause(id,data,requestOptions)
         }
 
 
@@ -606,9 +622,9 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type ToggleServicePauseMutationResult = NonNullable<Awaited<ReturnType<typeof toggleServicePause>>>
-
+    export type ToggleServicePauseMutationBody = BodyType<PauseInput>
     export type ToggleServicePauseMutationError = ErrorType<BadRequestResponse | UnauthorizedResponse | NotFoundResponse>
-    export type ToggleServicePauseMutationVariables = {id: number}
+    export type ToggleServicePauseMutationVariables = {id: number;data: BodyType<PauseInput>}
 
     /**
  * @summary Pause or resume a work period

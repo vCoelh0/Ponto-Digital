@@ -4,10 +4,12 @@ import {
   asc,
   desc,
   eq,
-  gte,
-  ilike,
+  gt,
   inArray,
-  lte,
+  isNull,
+  lt,
+  or,
+  sql,
 } from "drizzle-orm";
 import { Router, type IRouter, type RequestHandler } from "express";
 import {
@@ -32,14 +34,26 @@ import {
   ListServicesQueryParams,
   ListServicesResponse,
   ToggleServicePauseParams,
+  ToggleServicePauseBody,
   ToggleServicePauseResponse,
   UpdateServiceBody,
   UpdateServiceParams,
   UpdateServiceResponse,
 } from "@workspace/api-zod";
+import {
+  addDaysToDateKey,
+  dateKey,
+  effectiveEnd,
+  overlapsRange,
+  productiveSeconds,
+  productiveSecondsInRange,
+  rangeForPeriod,
+  startOfDateKey,
+  type Period,
+  type TimeRange,
+} from "../lib/time-tracking";
 
 const router: IRouter = Router();
-const timeZone = "America/Sao_Paulo";
 
 type AuthenticatedRequest = Parameters<RequestHandler>[0] & {
   authUserId?: string;
@@ -79,20 +93,7 @@ const pausedSecondsInCurrentPause = (service: DbService, at: Date) =>
       )
     : 0;
 
-const elapsedSeconds = (service: DbService, now: Date) => {
-  if (service.status === "completed") return service.durationSeconds;
-  const effectiveEnd =
-    service.status === "paused" && service.pauseStartedAt
-      ? service.pauseStartedAt
-      : now;
-  return Math.max(
-    0,
-    secondsSinceStart(service, effectiveEnd) -
-      service.pausedDurationSeconds,
-  );
-};
-
-const toApiService = ({ service, projectTitle }: JoinedService) => {
+const toApiService = ({ service, projectTitle }: JoinedService, now = new Date()) => {
   const resolvedProjectTitle = projectTitle ?? service.title;
   return {
     id: service.id,
@@ -104,33 +105,11 @@ const toApiService = ({ service, projectTitle }: JoinedService) => {
     startedAt: service.startedAt,
     endedAt: service.endedAt,
     durationSeconds: service.durationSeconds,
-    elapsedSeconds: elapsedSeconds(service, new Date()),
+    elapsedSeconds: productiveSeconds(service, now),
     pausedDurationSeconds: service.pausedDurationSeconds,
     pauseStartedAt: service.pauseStartedAt,
     status: service.status,
     createdAt: service.createdAt,
-  };
-};
-
-const dateKey = (date: Date) =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(date);
-
-const periodKeys = () => {
-  const now = new Date();
-  const today = dateKey(now);
-  const localNoon = new Date(`${today}T12:00:00-03:00`);
-  const day = localNoon.getDay();
-  const monday = new Date(localNoon);
-  monday.setDate(localNoon.getDate() - ((day + 6) % 7));
-  return {
-    today,
-    week: dateKey(monday),
-    month: `${today.slice(0, 7)}-01`,
   };
 };
 
@@ -146,8 +125,7 @@ const selectJoinedServices = async (
   options?: {
     projectId?: number;
     statuses?: Array<"running" | "paused" | "completed">;
-    startDate?: Date;
-    endDate?: Date;
+    range?: TimeRange;
     limit?: number;
   },
 ) => {
@@ -167,11 +145,14 @@ const selectJoinedServices = async (
         options?.statuses
           ? inArray(servicesTable.status, options.statuses)
           : undefined,
-        options?.startDate
-          ? gte(servicesTable.startedAt, options.startDate)
+        options?.range?.start
+          ? or(
+              isNull(servicesTable.endedAt),
+              gt(servicesTable.endedAt, options.range.start),
+            )
           : undefined,
-        options?.endDate
-          ? lte(servicesTable.startedAt, options.endDate)
+        options?.range?.end
+          ? lt(servicesTable.startedAt, options.range.end)
           : undefined,
       ),
     )
@@ -180,34 +161,87 @@ const selectJoinedServices = async (
   return options?.limit ? query.limit(options.limit) : query;
 };
 
-const buildSummary = async (userId: string, projectId?: number) => {
-  const completed = await selectJoinedServices(userId, {
-    projectId,
-    statuses: ["completed"],
+const daysWorked = (
+  rows: JoinedService[],
+  range: TimeRange,
+  now: Date,
+) => {
+  const days = new Set<string>();
+  for (const { service } of rows) {
+    const end = effectiveEnd(service, now);
+    const overlapStart = new Date(
+      Math.max(service.startedAt.getTime(), range.start?.getTime() ?? -Infinity),
+    );
+    const overlapEnd = new Date(
+      Math.min(end.getTime(), range.end?.getTime() ?? Infinity),
+    );
+    if (overlapEnd <= overlapStart) continue;
+    const lastKey = dateKey(new Date(overlapEnd.getTime() - 1));
+    for (
+      let key = dateKey(overlapStart);
+      key <= lastKey;
+      key = addDaysToDateKey(key, 1)
+    ) {
+      const dayRange = {
+        start: startOfDateKey(key),
+        end: startOfDateKey(addDaysToDateKey(key, 1)),
+      };
+      if (productiveSecondsInRange(service, dayRange, now) > 0) days.add(key);
+    }
+  }
+  return days.size;
+};
+
+const buildSummary = async (
+  userId: string,
+  filters: {
+    projectId?: number;
+    period?: Period;
+    startDate?: string;
+    endDate?: string;
+  } = {},
+) => {
+  const now = new Date();
+  const rows = await selectJoinedServices(userId, {
+    projectId: filters.projectId,
+    statuses: ["running", "paused", "completed"],
   });
-  const keys = periodKeys();
-  const sum = (from?: string) =>
-    completed.reduce(
+  const selectedRange = rangeForPeriod(
+    filters.period ?? "all",
+    now,
+    filters.startDate,
+    filters.endDate,
+  );
+  if (!selectedRange) return null;
+
+  const ranges = {
+    today: rangeForPeriod("today", now)!,
+    week: rangeForPeriod("week", now)!,
+    month: rangeForPeriod("month", now)!,
+    all: rangeForPeriod("all", now)!,
+    filtered: selectedRange,
+  };
+  const sum = (range: TimeRange) =>
+    rows.reduce(
       (total, row) =>
-        !from || dateKey(row.service.startedAt) >= from
-          ? total + row.service.durationSeconds
-          : total,
+        total + productiveSecondsInRange(row.service, range, now),
       0,
     );
-
-  const today = sum(keys.today);
-  const week = sum(keys.week);
-  const month = sum(keys.month);
-  const all = sum();
+  const totals = Object.fromEntries(
+    Object.entries(ranges).map(([key, range]) => [key, sum(range)]),
+  ) as Record<keyof typeof ranges, number>;
+  const filteredRows = rows.filter((row) =>
+    productiveSecondsInRange(row.service, selectedRange, now) > 0,
+  );
 
   let project;
-  if (projectId) {
+  if (filters.projectId) {
     const [record] = await db
       .select()
       .from(projectsTable)
       .where(
         and(
-          eq(projectsTable.id, projectId),
+          eq(projectsTable.id, filters.projectId),
           eq(projectsTable.userId, userId),
         ),
       )
@@ -217,21 +251,23 @@ const buildSummary = async (userId: string, projectId?: number) => {
         id: record.id,
         title: record.title,
         description: record.description,
-        seconds: all,
-        serviceCount: completed.length,
-        dayCount: new Set(
-          completed.map((item) => dateKey(item.service.startedAt)),
-        ).size,
-        services: completed.map(toApiService),
+        seconds: totals.filtered,
+        serviceCount: filteredRows.length,
+        dayCount: daysWorked(filteredRows, selectedRange, now),
+        services: filteredRows.map((row) => toApiService(row, now)),
       };
     }
   }
 
   return {
-    today: { seconds: today, label: durationLabel(today) },
-    week: { seconds: week, label: durationLabel(week) },
-    month: { seconds: month, label: durationLabel(month) },
-    all: { seconds: all, label: durationLabel(all) },
+    today: { seconds: totals.today, label: durationLabel(totals.today) },
+    week: { seconds: totals.week, label: durationLabel(totals.week) },
+    month: { seconds: totals.month, label: durationLabel(totals.month) },
+    all: { seconds: totals.all, label: durationLabel(totals.all) },
+    filtered: {
+      seconds: totals.filtered,
+      label: durationLabel(totals.filtered),
+    },
     ...(project ? { project } : {}),
   };
 };
@@ -250,6 +286,12 @@ const getOwnedProject = async (userId: string, projectId: number) => {
   return project;
 };
 
+const isUniqueViolation = (error: unknown) =>
+  typeof error === "object" &&
+  error !== null &&
+  "code" in error &&
+  error.code === "23505";
+
 router.use(requireAuth);
 
 router.get("/services", async (req, res): Promise<void> => {
@@ -261,24 +303,26 @@ router.get("/services", async (req, res): Promise<void> => {
 
   const userId = (req as AuthenticatedRequest).authUserId!;
   const { period, projectId, startDate, endDate } = parsed.data;
-  const keys = periodKeys();
-  const periodStart =
-    period === "today"
-      ? keys.today
-      : period === "week"
-        ? keys.week
-        : period === "month"
-          ? keys.month
-          : undefined;
+  const range = rangeForPeriod(period, new Date(), startDate, endDate);
+  if (!range) {
+    res.status(400).json({
+      error: "Informe datas válidas, com a data inicial anterior à final.",
+    });
+    return;
+  }
+  const now = new Date();
   const rows = await selectJoinedServices(userId, {
     projectId,
-    startDate,
-    endDate,
+    range,
   });
-  const filtered = periodStart
-    ? rows.filter((row) => dateKey(row.service.startedAt) >= periodStart)
-    : rows;
-  res.json(ListServicesResponse.parse(filtered.map(toApiService)));
+  const overlapping = rows.filter((row) =>
+    overlapsRange(row.service, range, now),
+  );
+  res.json(
+    ListServicesResponse.parse(
+      overlapping.map((row) => toApiService(row, now)),
+    ),
+  );
 });
 
 router.post("/services", async (req, res): Promise<void> => {
@@ -310,16 +354,25 @@ router.post("/services", async (req, res): Promise<void> => {
     return;
   }
 
-  const [created] = await db
-    .insert(servicesTable)
-    .values({
-      userId,
-      projectId: project.id,
-      title: project.title,
-      subtitle: parsed.data.subtitle?.trim() || null,
-      description: parsed.data.description?.trim() || null,
-    })
-    .returning();
+  let created: DbService | undefined;
+  try {
+    [created] = await db
+      .insert(servicesTable)
+      .values({
+        userId,
+        projectId: project.id,
+        title: project.title,
+        subtitle: parsed.data.subtitle?.trim() || null,
+        description: parsed.data.description?.trim() || null,
+      })
+      .returning();
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      res.status(409).json({ error: "Já existe um período em andamento." });
+      return;
+    }
+    throw error;
+  }
 
   res.status(201).json(
     CreateServiceResponse.parse(
@@ -409,103 +462,139 @@ router.post("/services/:id/finish", async (req, res): Promise<void> => {
   }
 
   const userId = (req as AuthenticatedRequest).authUserId!;
-  const [row] = await selectJoinedServices(userId, {
-    statuses: ["running", "paused"],
+  const finished = await db.transaction(async (tx) => {
+    const [service] = await tx
+      .select()
+      .from(servicesTable)
+      .where(
+        and(
+          eq(servicesTable.id, parsed.data.id),
+          eq(servicesTable.userId, userId),
+          inArray(servicesTable.status, ["running", "paused"]),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!service) return undefined;
+
+    const endedAt = new Date();
+    const currentPausedSeconds = pausedSecondsInCurrentPause(service, endedAt);
+    const durationSeconds = Math.max(
+      0,
+      secondsSinceStart(service, endedAt) -
+        service.pausedDurationSeconds -
+        currentPausedSeconds,
+    );
+    const [updated] = await tx
+      .update(servicesTable)
+      .set({
+        endedAt,
+        durationSeconds,
+        pausedDurationSeconds:
+          service.pausedDurationSeconds + currentPausedSeconds,
+        status: "completed",
+        pauseStartedAt: null,
+      })
+      .where(
+        and(
+          eq(servicesTable.id, service.id),
+          eq(servicesTable.userId, userId),
+          eq(servicesTable.status, service.status),
+        ),
+      )
+      .returning();
+    return updated;
   });
-  if (!row || row.service.id !== parsed.data.id) {
+  if (!finished) {
     res.status(404).json({ error: "Período em andamento não encontrado." });
     return;
   }
 
-  const endedAt = new Date();
-  const currentPausedSeconds = pausedSecondsInCurrentPause(
-    row.service,
-    endedAt,
-  );
-  const durationSeconds = Math.max(
-    0,
-    secondsSinceStart(row.service, endedAt) -
-      row.service.pausedDurationSeconds -
-      currentPausedSeconds,
-  );
-  const [finished] = await db
-    .update(servicesTable)
-    .set({
-      endedAt,
-      durationSeconds,
-      pausedDurationSeconds:
-        row.service.pausedDurationSeconds + currentPausedSeconds,
-      status: "completed",
-      pauseStartedAt: null,
-    })
-    .where(
-      and(
-        eq(servicesTable.id, row.service.id),
-        eq(servicesTable.userId, userId),
-      ),
-    )
-    .returning();
+  const project = finished.projectId
+    ? await getOwnedProject(userId, finished.projectId)
+    : undefined;
 
   res.json(
     FinishServiceResponse.parse(
       toApiService({
-        service: finished!,
-        projectTitle: row.projectTitle,
+        service: finished,
+        projectTitle: project?.title ?? null,
       }),
     ),
   );
 });
 
 router.post("/services/:id/pause", async (req, res): Promise<void> => {
-  const parsed = ToggleServicePauseParams.safeParse(req.params);
-  if (!parsed.success) {
-    res.status(400).json({ error: "Período inválido." });
+  const params = ToggleServicePauseParams.safeParse(req.params);
+  const body = ToggleServicePauseBody.safeParse(req.body);
+  if (!params.success || !body.success) {
+    res.status(400).json({ error: "Transição de pausa inválida." });
     return;
   }
 
   const userId = (req as AuthenticatedRequest).authUserId!;
-  const [row] = await selectJoinedServices(userId, {
-    statuses: ["running", "paused"],
+  const updated = await db.transaction(async (tx) => {
+    const [service] = await tx
+      .select()
+      .from(servicesTable)
+      .where(
+        and(
+          eq(servicesTable.id, params.data.id),
+          eq(servicesTable.userId, userId),
+          inArray(servicesTable.status, ["running", "paused"]),
+        ),
+      )
+      .for("update")
+      .limit(1);
+    if (!service) return undefined;
+
+    const requestedStatus = body.data.action === "pause" ? "paused" : "running";
+    if (service.status === requestedStatus) return service;
+
+    const now = new Date();
+    const pauseElapsed =
+      body.data.action === "resume" && service.pauseStartedAt
+        ? pausedSecondsInCurrentPause(service, now)
+        : 0;
+    const [result] = await tx
+      .update(servicesTable)
+      .set(
+        body.data.action === "resume"
+          ? {
+              status: "running",
+              pauseStartedAt: null,
+              pausedDurationSeconds:
+                service.pausedDurationSeconds + pauseElapsed,
+            }
+          : {
+              status: "paused",
+              pauseStartedAt: now,
+            },
+      )
+      .where(
+        and(
+          eq(servicesTable.id, service.id),
+          eq(servicesTable.userId, userId),
+          eq(servicesTable.status, service.status),
+        ),
+      )
+      .returning();
+    return result;
   });
-  if (!row || row.service.id !== parsed.data.id) {
+  if (!updated) {
     res.status(404).json({ error: "Período em andamento não encontrado." });
     return;
   }
 
-  const now = new Date();
-  const resuming = row.service.status === "paused";
-  const pauseElapsed =
-    resuming && row.service.pauseStartedAt
-      ? pausedSecondsInCurrentPause(row.service, now)
-      : 0;
-  const [updated] = await db
-    .update(servicesTable)
-    .set(
-      resuming
-        ? {
-            status: "running",
-            pauseStartedAt: null,
-            pausedDurationSeconds:
-              row.service.pausedDurationSeconds + pauseElapsed,
-          }
-        : {
-            status: "paused",
-            pauseStartedAt: now,
-          },
-    )
-    .where(
-      and(
-        eq(servicesTable.id, row.service.id),
-        eq(servicesTable.userId, userId),
-      ),
-    )
-    .returning();
+  const project = updated.projectId
+    ? await getOwnedProject(userId, updated.projectId)
+    : undefined;
 
   res.json(
     ToggleServicePauseResponse.parse(
       toApiService({
-        service: updated!,
-        projectTitle: row.projectTitle,
+        service: updated,
+        projectTitle: project?.title ?? null,
       }),
     ),
   );
@@ -526,8 +615,8 @@ router.get("/dashboard", async (req, res): Promise<void> => {
   res.json(
     GetDashboardResponse.parse({
       ...(active ? { active: toApiService(active) } : {}),
-      recent: recent.map(toApiService),
-      summary,
+      recent: recent.map((row) => toApiService(row)),
+      summary: summary!,
     }),
   );
 });
@@ -539,11 +628,14 @@ router.get("/summary", async (req, res): Promise<void> => {
     return;
   }
   const userId = (req as AuthenticatedRequest).authUserId!;
-  res.json(
-    GetSummaryResponse.parse(
-      await buildSummary(userId, parsed.data.projectId),
-    ),
-  );
+  const summary = await buildSummary(userId, parsed.data);
+  if (!summary) {
+    res.status(400).json({
+      error: "Informe datas válidas, com a data inicial anterior à final.",
+    });
+    return;
+  }
+  res.json(GetSummaryResponse.parse(summary));
 });
 
 router.post("/projects", async (req, res): Promise<void> => {
@@ -559,7 +651,10 @@ router.post("/projects", async (req, res): Promise<void> => {
     .select({ id: projectsTable.id })
     .from(projectsTable)
     .where(
-      and(eq(projectsTable.userId, userId), ilike(projectsTable.title, title)),
+      and(
+        eq(projectsTable.userId, userId),
+        sql<boolean>`lower(trim(${projectsTable.title})) = lower(${title})`,
+      ),
     )
     .limit(1);
   if (duplicate) {
@@ -567,14 +662,23 @@ router.post("/projects", async (req, res): Promise<void> => {
     return;
   }
 
-  const [created] = await db
-    .insert(projectsTable)
-    .values({
-      userId,
-      title,
-      description: parsed.data.description?.trim() || null,
-    })
-    .returning();
+  let created: typeof projectsTable.$inferSelect | undefined;
+  try {
+    [created] = await db
+      .insert(projectsTable)
+      .values({
+        userId,
+        title,
+        description: parsed.data.description?.trim() || null,
+      })
+      .returning();
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      res.status(409).json({ error: "Já existe um projeto com esse nome." });
+      return;
+    }
+    throw error;
+  }
   res.status(201).json(
     CreateProjectResponse.parse({
       id: created!.id,
@@ -618,26 +722,27 @@ router.get("/projects", async (req, res): Promise<void> => {
     .from(projectsTable)
     .where(eq(projectsTable.userId, userId))
     .orderBy(asc(projectsTable.title));
-  const completed = await selectJoinedServices(userId, {
-    statuses: ["completed"],
+  const services = await selectJoinedServices(userId, {
+    statuses: ["running", "paused", "completed"],
   });
+  const now = new Date();
+  const allTime: TimeRange = {};
 
   const response = projects.map((project) => {
-    const services = completed.filter(
+    const projectServices = services.filter(
       (item) => item.service.projectId === project.id,
     );
     return {
       id: project.id,
       title: project.title,
       description: project.description,
-      seconds: services.reduce(
-        (total, item) => total + item.service.durationSeconds,
+      seconds: projectServices.reduce(
+        (total, item) =>
+          total + productiveSecondsInRange(item.service, allTime, now),
         0,
       ),
-      serviceCount: services.length,
-      dayCount: new Set(
-        services.map((item) => dateKey(item.service.startedAt)),
-      ).size,
+      serviceCount: projectServices.length,
+      dayCount: daysWorked(projectServices, allTime, now),
     };
   });
   res.json(ListProjectsResponse.parse(response));

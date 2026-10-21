@@ -5,8 +5,10 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { EndDateParameter } from './endDateParameter';
 import type { PeriodParameter } from './periodParameter';
 import type { ProjectIdParameter } from './projectIdParameter';
+import type { StartDateParameter } from './startDateParameter';
 
 export type GetSummaryParams = {
 /**
@@ -14,4 +16,12 @@ export type GetSummaryParams = {
  */
 projectId?: ProjectIdParameter;
 period?: PeriodParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+startDate?: StartDateParameter;
+/**
+ * @pattern ^\d{4}-\d{2}-\d{2}$
+ */
+endDate?: EndDateParameter;
 };
