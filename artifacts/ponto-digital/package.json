@@ -8,6 +8,7 @@
     "build": "vite build --config vite.config.ts",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "test": "node --test --test-isolation=none tests/*.test.mjs",
+    "test:pwa": "pnpm run build && node --test tests/pwa-build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
