@@ -146,6 +146,11 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
 const queryClient = new QueryClient({
   defaultOptions: {
+    mutations: {
+      // Failed offline actions must never be queued for a later reconnection.
+      networkMode: 'always',
+      retry: false,
+    },
     queries: {
       retry: false,
       refetchOnWindowFocus: false,

@@ -13,13 +13,13 @@ export function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-4 border-b border-border bg-background/95 backdrop-blur px-6 lg:px-10">
-        <div className="flex items-center gap-2 mr-6 text-primary">
+      <header className="sticky top-0 z-30 flex min-h-16 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border bg-background/95 backdrop-blur px-4 py-3 sm:flex-nowrap sm:px-6 lg:px-10">
+        <div className="flex items-center gap-2 sm:mr-6 text-primary">
           <Clock className="w-5 h-5" />
           <span className="font-semibold tracking-tight text-foreground">Ponto Digital</span>
         </div>
 
-        <nav className="flex items-center gap-6 text-sm font-medium flex-1">
+        <nav className="order-3 flex w-full items-center justify-center gap-6 text-sm font-medium sm:order-none sm:w-auto sm:flex-1 sm:justify-start">
           <Link
             href="/dashboard"
             className={cn(
@@ -49,7 +49,7 @@ export function Layout({ children }: LayoutProps) {
         <button
           type="button"
           onClick={() => signOut({ redirectUrl: import.meta.env.BASE_URL })}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+          className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
           aria-label="Sair da conta"
           title="Sair"
         >
